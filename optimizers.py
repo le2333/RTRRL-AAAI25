@@ -1,6 +1,8 @@
 """Util for creating optax optimizers."""
 
 from dataclasses import dataclass, field
+from simple_parsing.helpers import dict_field
+import json
 import optax
 
 
@@ -10,15 +12,21 @@ class OptimizerConfig:
 
     opt_name: str = "adam"  # The name of the optimizer.
     learning_rate: float = 1e-3  # The base learning rate.
-    kwargs: dict = field(default_factory=dict, hash=False)  # Additional keyword arguments for the optimizer.
+    kwargs: dict = dict_field(
+        hash=False, type=json.loads
+    )  # Additional keyword arguments for the optimizer.
     decay_type: str | None = None  # Learning rate decay type.
-    lr_kwargs: dict = field(default_factory=dict, hash=False)  # Additional kwargs for the learning rate decay.
+    lr_kwargs: dict = dict_field(
+        hash=False, type=json.loads
+    )  # Additional kwargs for the learning rate decay.
     weight_decay: float = 0.0  # Weight decay.
     gradient_clip: float | None = None  # Gradient clipping.
     multi_step: int | None = None  # Number of steps to accumulate.
 
 
-def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientTransformation:
+def make_optimizer(
+    config=OptimizerConfig(), direction="min"
+) -> optax.GradientTransformation:
     """Make optax optimizer.
 
     The decorator allows reading scheduled lr from the optimizer state.
@@ -131,7 +139,9 @@ def make_optimizer(config=OptimizerConfig(), direction="min") -> optax.GradientT
             # Weight decay
             optax.add_decayed_weights(weight_decay),  # , mask=decay_mask
             # Gradient clipping
-            optax.clip_by_global_norm(config.gradient_clip) if config.gradient_clip else optax.identity(),
+            optax.clip_by_global_norm(config.gradient_clip)
+            if config.gradient_clip
+            else optax.identity(),
             # Optimizer
             getattr(optax, config.opt_name)(learning_rate, **config.kwargs),
         )
