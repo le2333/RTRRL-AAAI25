@@ -35,20 +35,24 @@ from models.jax_util import sigmoid_between, zeros_like_tree
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", 1000000)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
-jax.config.update("jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir")
+jax.config.update(
+    "jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir"
+)
 
 
 @dataclass(unsafe_hash=True)
 class RTRRLParams:
     """Class representing the parameters for the RTRRL algorithm."""
 
-    debug: int | bool = 0  # Enable Debugging, higher levels include more fine-grainde debugging: 2 = Profiling
+    debug: int | bool = (
+        0  # Enable Debugging, higher levels include more fine-grainde debugging: 2 = Profiling
+    )
     seed: int | None = None
 
     # Training
     episodes: int = 150_000
     steps: int = 1000
-    patience: int = 20
+    patience: int = 100
 
     # Validation
     eval_every: int = 100
@@ -77,37 +81,39 @@ class RTRRLParams:
     # Optimizer
     optimizer_params_td: OptimizerConfig = OptimizerConfig(
         opt_name="adam",
-        learning_rate=1e-3,
+        learning_rate=1e-4,
+        # gradient_clip=1.0, # NOTE: Gradient clip for TD updates leads to exploding e-traces
     )
     optimizer_params_rnn: OptimizerConfig = OptimizerConfig(
         opt_name="adam",
-        learning_rate=1e-3,
+        learning_rate=1e-4,
+        gradient_clip=1.0,
     )
 
     # RNN
-    rnn_model: str | None = "ctrnn"
-    hidden_size: int = 32
+    rnn_model: str | None = "lru"
     gradient_mode: str = "rflo"
+    hidden_size: int = 32
     wiring: str = "fully_connected"
 
     # TD(lambda)
     trace_mode: str = "accumulate"
     gamma: float = 0.99
-    lambda_v: float = 0.99
-    lambda_pi: float = 0.99
-    lambda_rnn: float = 0.99
+    lambda_v: float = 0.9
+    lambda_pi: float = 0.9
+    lambda_rnn: float = 0.9
     eta_pi: float = 1
     eta_f: float = 1
     entropy_rate: float = 1e-5
-    eta: float | None = 0
+    eta: float | None = None
 
     # Features
     meta_rl: bool = True
-    f_align: bool = True
-    normalize_reward: bool = True
+    f_align: bool = False
+    normalize_reward: bool = False
     normalize_obs: bool = False
-    
-    var_scaling: bool = True
+
+    var_scaling: bool = False
     layer_norm: bool = False
     mlp_actor: bool = False
     pass_obs: bool = False
@@ -176,7 +182,11 @@ class RNNActorCritic(nn.RNNCellBase):
     @nn.nowrap
     def _make_rnn(self):
         if self.rnn_model == "ctrnn":
-            extra_w_kw = {"interneurons": self.hidden_size - (self.a_dim + 1)} if self.wiring == "ncp" else {}
+            extra_w_kw = (
+                {"interneurons": self.hidden_size - (self.a_dim + 1)}
+                if self.wiring == "ncp"
+                else {}
+            )
             return OnlineCTRNNCell(
                 self.hidden_size,
                 # num_modules=self.num_modules,
@@ -192,6 +202,7 @@ class RNNActorCritic(nn.RNNCellBase):
         elif self.rnn_model == "lru":
             return OnlineLRULayer(
                 self.hidden_size,
+                plasticity=self.gradient_mode,
                 # num_modules=self.num_modules,
                 name="rnn",
             )
@@ -374,7 +385,11 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
     rnn_keys = [k for k in params["params"] if "rnn" in k]
     if args.eta_f and args.rnn_model is not None:
         trace_keys += rnn_keys
-    z0 = {k: v for k, v in init_trace(params, batch_shape)["params"].items() if k in trace_keys}
+    z0 = {
+        k: v
+        for k, v in init_trace(params, batch_shape)["params"].items()
+        if k in trace_keys
+    }
 
     # Initialize optimizer
     param_labels = {"td": "td"}
@@ -412,7 +427,9 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
                 [
                     _input,
                     jnp.zeros((_input.shape[0], ACT_SIZE)),
-                    normalize(env_state.reward, _reward_rms).reshape(args.eval_batch_size, -1),
+                    normalize(env_state.reward, _reward_rms).reshape(
+                        args.eval_batch_size, -1
+                    ),
                 ],
                 axis=-1,
             )
@@ -426,15 +443,21 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
             # Unpack carry
             env_state, rnn_state, re_action, _key = carry
             _key, step_key = jrandom.split(_key)
-            f_input = normalize(env_state.obs, _obs_rms).reshape(args.eval_batch_size, -1)
+            f_input = normalize(env_state.obs, _obs_rms).reshape(
+                args.eval_batch_size, -1
+            )
             # obs = normalization(state.obs) if normalization is not None else state.obs
 
             if args.meta_rl:
-                r = normalize(env_state.reward, _reward_rms).reshape(args.eval_batch_size, -1)
+                r = normalize(env_state.reward, _reward_rms).reshape(
+                    args.eval_batch_size, -1
+                )
                 f_input = jnp.concatenate([f_input, re_action, r], axis=-1)
 
             step_key = jrandom.split(step_key, args.eval_batch_size)
-            rnn_state, (action, *_) = jax.vmap(partial(model.apply, _params))(rnn_state, f_input, key=step_key)
+            rnn_state, (action, *_) = jax.vmap(partial(model.apply, _params))(
+                rnn_state, f_input, key=step_key
+            )
             # action = action.mean(axis=-1)
             if DISCRETE:
                 # action = action.mean(axis=0)
@@ -444,7 +467,9 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
             # Step environments
             env_state = eval_env.step(env_state, action)
             # Assemble next input for the filter
-            re_action = jax.nn.one_hot(action, eval_env.action_size) if DISCRETE else action
+            re_action = (
+                jax.nn.one_hot(action, eval_env.action_size) if DISCRETE else action
+            )
             carry = env_state, rnn_state, re_action, _key
             return carry, env_state
 
@@ -457,9 +482,15 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
 
         # total_reward = jnp.sum(env_states.reward) / jnp.max(jnp.array([jnp.sum(env_states.done), 1])).mean()
         # For episodes that are done early, get the first occurence of done
-        ep_until = jnp.where(env_states.done.any(axis=0), env_states.done.argmax(axis=0), env_states.done.shape[0])
+        ep_until = jnp.where(
+            env_states.done.any(axis=0),
+            env_states.done.argmax(axis=0),
+            env_states.done.shape[0],
+        )
         # Compute cumsum and get value corresponding to end of episode per batch.
-        ep_rewards = env_states.reward.cumsum(axis=0)[ep_until, jnp.arange(ep_until.shape[-1])].mean()
+        ep_rewards = env_states.reward.cumsum(axis=0)[
+            ep_until, jnp.arange(ep_until.shape[-1])
+        ].mean()
         return ep_rewards, env_states
 
     # Set up scan body
@@ -484,7 +515,9 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
         seed, action_key, dropout_key = jrandom.split(seed, 3)
 
         # Step ENV
-        action = jnp.clip(action, *jnp.array(act_clip)) if act_clip is not None else action
+        action = (
+            jnp.clip(action, *jnp.array(act_clip)) if act_clip is not None else action
+        )
         if DISCRETE:
             action = action.reshape(batch_shape)
         env_state = env.step(env_state, action)
@@ -495,7 +528,9 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
         reward = env_state.reward.reshape(-1)
 
         # Reset cell state and trace if done
-        rnn_state = jax.tree.map(lambda a, b: jax.vmap(jnp.where)(env_state.done, a, b), h0, rnn_state)
+        rnn_state = jax.tree.map(
+            lambda a, b: jax.vmap(jnp.where)(env_state.done, a, b), h0, rnn_state
+        )
         if args.rnn_model:
             old_hidden = rnn_state[0]
 
@@ -504,7 +539,8 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
         if args.meta_rl:
             # Set action to zeros where env is done
             action, _r = jax.tree.map(
-                lambda a: jax.vmap(jnp.where)(env_state.done, jnp.zeros_like(a), a), (action, reward)
+                lambda a: jax.vmap(jnp.where)(env_state.done, jnp.zeros_like(a), a),
+                (action, reward),
             )
             if DISCRETE:
                 # One-hot encode action
@@ -512,17 +548,28 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
             else:
                 re_action = action
             # Append action and reward to input
-            f_input = jnp.concatenate([f_input, re_action, _r.reshape(batch_shape + (-1,))], axis=-1)
+            f_input = jnp.concatenate(
+                [f_input, re_action, _r.reshape(batch_shape + (-1,))], axis=-1
+            )
 
         def grads_step(h, i):
             """Entire gradient computation and trace updates. Used to vmap over."""
 
             # RNN step
             def rnn_step(_params):
-                return model.apply(_params, h, i, training=True, rngs={"dropout": dropout_key}, method=model.rnn_step)
+                return model.apply(
+                    _params,
+                    h,
+                    i,
+                    training=True,
+                    rngs={"dropout": dropout_key},
+                    method=model.rnn_step,
+                )
 
             # We use vjp to get a function for computing the rnn gradients later
-            hidden, rnn_backwards, rnn_state = jax.vjp(rnn_step, slow_params, has_aux=True)
+            hidden, rnn_backwards, rnn_state = jax.vjp(
+                rnn_step, slow_params, has_aux=True
+            )
 
             @partial(jax.grad, has_aux=True, argnums=[0, 1])
             def td_loss(_params, _hidden):
@@ -553,9 +600,10 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
 
                 return loss, (action, action_dist, scale, v_hat, loss_info)
 
-            (grads_next, hidden_grads), (action, action_dist, actor_scale, v_hat, loss_info) = td_loss(
-                slow_params, hidden
-            )
+            (
+                (grads_next, hidden_grads),
+                (action, action_dist, actor_scale, v_hat, loss_info),
+            ) = td_loss(slow_params, hidden)
 
             # Compute gradients wrt rnn params
             hidden_grads = rnn_backwards(hidden_grads)[0]
@@ -568,7 +616,11 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
                 if args.rnn_model and args.slow_rnn_factor:
                     # Encourage slow changing rnn state
                     loss -= jnp.array(
-                        jax.tree.map(lambda a, b: jnp.linalg.norm(a - b) * args.slow_rnn_factor, old_hidden, _hidden)
+                        jax.tree.map(
+                            lambda a, b: jnp.linalg.norm(a - b) * args.slow_rnn_factor,
+                            old_hidden,
+                            _hidden,
+                        )
                     ).mean()
 
                 # # Entropy loss
@@ -584,16 +636,28 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
 
                 return loss, loss_info
 
-            (non_td_grad, hidden_non_td_grad), non_td_loss_info = non_td_loss(slow_params, hidden)
+            (non_td_grad, hidden_non_td_grad), non_td_loss_info = non_td_loss(
+                slow_params, hidden
+            )
             loss_info = {**loss_info, **non_td_loss_info}
             # Compute gradients wrt
             hidden_extra_grad = rnn_backwards(hidden_non_td_grad)[0]
-            non_td_grads = jax.tree.map(lambda x, y: actor_scale * (x + y), non_td_grad, hidden_extra_grad)
-            return rnn_state, non_td_grads, loss_info, action, action_dist, v_hat, grads_next
+            non_td_grads = jax.tree.map(
+                lambda x, y: actor_scale * (x + y), non_td_grad, hidden_extra_grad
+            )
+            return (
+                rnn_state,
+                non_td_grads,
+                loss_info,
+                action,
+                action_dist,
+                v_hat,
+                grads_next,
+            )
 
         # vmap over gradient computation
-        rnn_state, non_td_grads, loss_info, action, action_dist, v_hat, grads_next = jax.vmap(grads_step)(
-            rnn_state, f_input
+        rnn_state, non_td_grads, loss_info, action, action_dist, v_hat, grads_next = (
+            jax.vmap(grads_step)(rnn_state, f_input)
         )
 
         # TD-ERROR ------------------------------------------------------------
@@ -620,20 +684,28 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
             if args.eta_f:
                 updates["params"]["rnn"] = compute_updates(z["rnn"], d=d * args.eta_f)
             else:
-                updates["params"]["rnn"] = zeros_like_tree(non_td_grads["params"]["rnn"])
+                updates["params"]["rnn"] = zeros_like_tree(
+                    non_td_grads["params"]["rnn"]
+                )
 
         # Sum up td and non-td updates
-        updates["params"] = jax.tree.map(lambda x, y: x + y, non_td_grads["params"], updates["params"])
+        updates["params"] = jax.tree.map(
+            lambda x, y: x + y, non_td_grads["params"], updates["params"]
+        )
         # Take mean over batch
         updates = jax.tree.map(lambda x: jnp.mean(x, axis=0), updates)
         # Step optimizer
-        updates, opt_state = optimizer.update(updates["params"], opt_state, params["params"])
+        updates, opt_state = optimizer.update(
+            updates["params"], opt_state, params["params"]
+        )
         # Apply updates
         params["params"] = optax.apply_updates(params["params"], updates)
         if args.update_period != 1:
             # Polyak averaging of updates
             rnn_slow_params = optax.incremental_update(
-                params["params"]["rnn"], slow_params["params"]["rnn"], args.update_period
+                params["params"]["rnn"],
+                slow_params["params"]["rnn"],
+                args.update_period,
             )
             slow_params = params
             slow_params["params"]["rnn"] = rnn_slow_params
@@ -642,8 +714,12 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
 
         # HACK: clip RNN tau
         if args.rnn_model == "ctrnn":
-            params["params"]["rnn"]["tau"] = jnp.clip(params["params"]["rnn"]["tau"], min=1.0)
-            slow_params["params"]["rnn"]["tau"] = jnp.clip(slow_params["params"]["rnn"]["tau"], min=1.0)
+            params["params"]["rnn"]["tau"] = jnp.clip(
+                params["params"]["rnn"]["tau"], min=1.0
+            )
+            slow_params["params"]["rnn"]["tau"] = jnp.clip(
+                slow_params["params"]["rnn"]["tau"], min=1.0
+            )
 
         if args.eta is None:
             # For episodic tasks remember total discounting factors
@@ -794,7 +870,9 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
                 metrics = {}
 
             if args.log_norms and i % args.log_every == 0:
-                norms = log_norms({"z": z, "params": params, "slow_params": slow_params})
+                norms = log_norms(
+                    {"z": z, "params": params, "slow_params": slow_params}
+                )
                 metrics = {**metrics, **{"norms/" + k: v for k, v in norms.items()}}
                 # metrics = {k: float(v) for k, v in metrics.items()}
 
@@ -804,21 +882,35 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
                 refresh=False,
             )
 
-            if args.eval_every and (i % args.eval_every == 0 or i == args.episodes - 1):  # also eval last
+            if args.eval_every and (
+                i % args.eval_every == 0 or i == args.episodes - 1
+            ):  # also eval last
                 key_eval, _key = jrandom.split(key_eval)
                 # Do not render the first episode, render the last one
-                eval_avg, env_states = eval_model(slow_params, key=_key, _obs_rms=obs_rms, _reward_rms=reward_rms)
+                eval_avg, env_states = eval_model(
+                    slow_params, key=_key, _obs_rms=obs_rms, _reward_rms=reward_rms
+                )
                 metrics["eval/rewards"] = float(eval_avg)
                 pbar.write(f"Eval reward: {eval_avg:.2f}")
 
                 # Maybe render and log video
-                should_render = args.env_params.render and ((i % render_every == 0 and i > 0) or i == args.episodes - 1)
+                should_render = args.env_params.render and (
+                    (i % render_every == 0 and i > 0) or i == args.episodes - 1
+                )
                 if logger is not None and should_render:
                     frames = render_frames(
-                        env, env_states.pipeline_state, args.render_start, args.render_start + args.render_steps
+                        env,
+                        env_states.pipeline_state,
+                        args.render_start,
+                        args.render_start + args.render_steps,
                     )
                     if frames:
-                        logger.log_video("env/video", np.array(frames), fps=30, caption=f"Reward: {eval_avg:.2f}")
+                        logger.log_video(
+                            "env/video",
+                            np.array(frames),
+                            fps=30,
+                            caption=f"Reward: {eval_avg:.2f}",
+                        )
 
                 if eval_avg > logger["best_eval_reward"]:
                     # New best
