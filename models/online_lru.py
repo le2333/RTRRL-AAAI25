@@ -168,7 +168,7 @@ class OnlineLRUCell(nn.RNNCellBase):
             )
             new_grad_B = (jnp.expand_dims(Lambda, axis=-1)) * grad_memory[
                 2
-            ] + jnp.outer(_p["gamma_log"], x_t)
+            ] + jnp.outer(jnp.exp(_p["gamma_log"]), x_t)
 
             return (
                 new_grad_lambda,
