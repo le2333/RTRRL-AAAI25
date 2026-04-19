@@ -1,9 +1,7 @@
 """Linear Recurrent Units built with Jax.
 
 author: jlemmel
-Stolen from the paper Real-Time Recurrent Learning using Trace Units in Reinforcement Learning
-by Elelimy et. al.
-NeurIPS 2024
+Adapted from: https://github.com/NicolasZucchet/Online-learning-LR-dependencies
 """
 
 from functools import partial
