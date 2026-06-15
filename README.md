@@ -16,14 +16,34 @@ python rtrrl.py
 
 ## Loggging
 
-You can log results using [`aim`](https://aimstack.readthedocs.io/en/latest/index.html) or [`wandb`](https://wandb.ai/). By default no logging framework is installed.
+You can log results using [`aim`](https://aimstack.readthedocs.io/en/latest/index.html) or [`wandb`](https://wandb.ai/). Aim is installed as a project dependency for PPO/RTRRL experiment tracking; W&B remains optional.
 
-After installing the respective package, you can enable logging by providing the `--logging` argument. 
+You can enable logging by providing the `--logging` argument.
 
 ```
-pip install aim
 python rtrrl.py --logging aim
 ```
+
+For PPO runs, set `logging: "aim"` and `log_repo` in the YAML config. For
+example, `config/ppo_hopper_default_2m.yml` writes to `logs/aim_ppo/.aim`.
+
+To view Aim results when this project is running on a remote machine, start the
+Aim UI from the repository root in the remote project terminal:
+
+```
+poetry run aim up --repo logs/aim_ppo/.aim --host 0.0.0.0 --port 43800
+```
+
+Then forward remote port `43800` through Cursor/SSH and open the forwarded local
+address in your browser, usually:
+
+```
+http://localhost:43800
+```
+
+If Cursor shows an "Open in Browser" prompt for the forwarded port, use that
+link. Use Aim's run list, metric filters, or the run hash printed by your
+tracking workflow to find a specific run.
 
 ## CUDA support
 

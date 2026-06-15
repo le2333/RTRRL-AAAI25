@@ -143,7 +143,7 @@ class AimLogger(DummyLogger):
 
     def __repr__(self) -> str:
         """Return name of logger."""
-        return "DummyLogger"
+        return "AimLogger"
 
     @override
     def __init__(self, name, repo=None, hparams=None, run_name=""):
@@ -161,7 +161,7 @@ class AimLogger(DummyLogger):
     def log(self, metrics, step=None):
         """Loop over scalars and track them with aim."""
         for k, v in metrics.items():
-            self.run.track(v, name=k, epoch=None if step is None else int(step))
+            self.run.track(v, name=k, step=None if step is None else int(step))
 
     @override
     def log_params(self, params_dict):
