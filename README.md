@@ -49,10 +49,24 @@ tracking workflow to find a specific run.
 
 A GPU can speed up training when using large batch sizes but will slow it down for smaller ones. 
 
-Make sure to install the CUDA version of `jax` and `jaxlib`. 
+The project pins JAX through its dependency graph. For JAX `0.5.0`, CUDA support
+is provided by the plugin-based `jax[cuda12]` extra rather than a separate CUDA
+`jaxlib` wheel. Install the CUDA 12 plugin into the Poetry environment with:
 
 ```
-    pip install jax[cuda]
+poetry run poe install_jax_cuda12
+```
+
+Check the active backend and devices:
+
+```
+poetry run python -c "import jax; print(jax.default_backend()); print(jax.devices())"
+```
+
+To force CPU execution even when a GPU backend is installed:
+
+```
+JAX_PLATFORM_NAME=cpu poetry run python -c "import jax; print(jax.default_backend()); print(jax.devices())"
 ```
 
 ## Algorithm
