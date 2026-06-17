@@ -25,13 +25,13 @@ python rtrrl.py --logging aim
 ```
 
 For PPO runs, set `logging: "aim"` and `log_repo` in the YAML config. For
-example, `config/ppo_hopper_default_2m.yml` writes to `logs/aim_ppo/.aim`.
+example, `config/ppo_hopper_default_2m.yml` writes to `logs/aim/.aim`.
 
 To view Aim results when this project is running on a remote machine, start the
 Aim UI from the repository root in the remote project terminal:
 
 ```
-poetry run aim up --repo logs/aim_ppo/.aim --host 0.0.0.0 --port 43800
+poetry run aim up --repo logs/aim/.aim --host 0.0.0.0 --port 43800
 ```
 
 Then forward remote port `43800` through Cursor/SSH and open the forwarded local
