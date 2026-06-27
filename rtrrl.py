@@ -117,6 +117,8 @@ class RTRRLParams:
     layer_norm: bool = False
     mlp_actor: bool = False
     pass_obs: bool = False
+    align_action_logprob: bool = False
+    update_trace_before_td: bool = False
     update_period: float = 1
     dropout_rate: float = 0
     act_magnitude_factor: float = 0
@@ -579,9 +581,16 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
                 # Compute action distribution
                 action_dist = model.apply(_params, _hidden, i, method=model.action_dist)
                 # Sample action from target network
-                action = action_dist.sample(seed=action_key)
+                sampled_action = action_dist.sample(seed=action_key)
+                if args.align_action_logprob and not DISCRETE and act_clip is not None:
+                    action = jnp.clip(
+                        jax.lax.stop_gradient(sampled_action),
+                        *jnp.array(act_clip),
+                    )
+                else:
+                    action = sampled_action
                 # Actor loss is log probability of sampled action
-                actor_loss = action_dist.log_prob(action)
+                actor_loss = action_dist.log_prob(jax.lax.stop_gradient(action))
 
                 # Add up losses
                 loss = actor_loss.mean() * args.eta_pi + v_hat.mean()
@@ -665,24 +674,67 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
         d = v_targ - r_bar - v_prev.squeeze()
         loss_info["v_targ"] = jnp.mean(v_targ)
 
+        def trace_updates(_grads_next, _z, _i, _lambda_scale_rnn=1):
+            z_next = {
+                "td": {
+                    "actor": trace_update(
+                        _grads_next["params"]["td"]["actor"],
+                        _z["td"]["actor"],
+                        gamma_lambda=args.lambda_pi * args.gamma * _lambda_scale_rnn,
+                        _I=_i,
+                    ),
+                    "critic": trace_update(
+                        _grads_next["params"]["td"]["critic"],
+                        _z["td"]["critic"],
+                        trace_mode=args.trace_mode,
+                        gamma_lambda=args.lambda_v * args.gamma,
+                        alpha=critic_lr,
+                        _I=_i,
+                    ),
+                }
+            }
+            if args.rnn_model and args.eta_f:
+                if args.lambda_rnn != 0:
+                    z_next["rnn"] = trace_update(
+                        _grads_next["params"]["rnn"],
+                        _z["rnn"],
+                        gamma_lambda=args.lambda_rnn * args.gamma * _lambda_scale_rnn,
+                        _I=_i,
+                    )
+                else:
+                    z_next["rnn"] = _grads_next["params"]["rnn"]
+            return z_next
+
+        if args.update_trace_before_td:
+            # Match the paper ordering: incorporate the current action/value
+            # gradients into eligibility traces before multiplying by TD error.
+            z = jax.tree.map(
+                lambda a, b: jax.vmap(jnp.where)(env_state.done, a, b), z0, z
+            )
+            z_for_update = jax.vmap(trace_updates)(grads_next, z, _I)
+        else:
+            z_for_update = z
+
         # Combine traces with td-error to compute the updates
         updates = {
             "params": {
                 "td": {
                     "critic": compute_updates(
-                        z["td"]["critic"],
+                        z_for_update["td"]["critic"],
                         trace_mode=args.trace_mode,
                         d=d,
                         dutch_diff=(v_hat - v_prev),  # Used for dutch traces
                         alpha=critic_lr,
                     ),
-                    "actor": compute_updates(z["td"]["actor"], d=d),
+                    "actor": compute_updates(z_for_update["td"]["actor"], d=d),
                 }
             }
         }
         if args.rnn_model:
             if args.eta_f:
-                updates["params"]["rnn"] = compute_updates(z["rnn"], d=d * args.eta_f)
+                updates["params"]["rnn"] = compute_updates(
+                    z_for_update["rnn"], d=d * args.eta_f
+                )
             else:
                 updates["params"]["rnn"] = zeros_like_tree(
                     non_td_grads["params"]["rnn"]
@@ -730,43 +782,15 @@ def train_rtrrl(args: RTRRLParams, logger=DummyLogger()):
             # See Sutton & Barto 2017 p. 275 ff.
             r_bar = r_bar + args.eta * jnp.mean(d)
 
-        # Trace updates
-        # Reset trace if done
-        z = jax.tree.map(lambda a, b: jax.vmap(jnp.where)(env_state.done, a, b), z0, z)
-
-        # Update Traces
-        def trace_updates(_grads_next, _z, _i, _lambda_scale_rnn=1):
-            z_next = {
-                "td": {
-                    "actor": trace_update(
-                        _grads_next["params"]["td"]["actor"],
-                        _z["td"]["actor"],
-                        gamma_lambda=args.lambda_pi * args.gamma * _lambda_scale_rnn,
-                        _I=_i,
-                    ),
-                    "critic": trace_update(
-                        _grads_next["params"]["td"]["critic"],
-                        _z["td"]["critic"],
-                        trace_mode=args.trace_mode,
-                        gamma_lambda=args.lambda_v * args.gamma,
-                        alpha=critic_lr,
-                        _I=_i,
-                    ),
-                }
-            }
-            if args.rnn_model and args.eta_f:
-                if args.lambda_rnn != 0:
-                    z_next["rnn"] = trace_update(
-                        _grads_next["params"]["rnn"],
-                        _z["rnn"],
-                        gamma_lambda=args.lambda_rnn * args.gamma * _lambda_scale_rnn,
-                        _I=_i,
-                    )
-                else:
-                    z_next["rnn"] = _grads_next["params"]["rnn"]
-            return z_next
-
-        z = jax.vmap(trace_updates)(grads_next, z, _I)
+        if args.update_trace_before_td:
+            z = z_for_update
+        else:
+            # Trace updates
+            # Reset trace if done
+            z = jax.tree.map(
+                lambda a, b: jax.vmap(jnp.where)(env_state.done, a, b), z0, z
+            )
+            z = jax.vmap(trace_updates)(grads_next, z, _I)
 
         _carry = (
             params,

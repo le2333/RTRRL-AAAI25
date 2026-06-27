@@ -76,6 +76,7 @@ class PPOParams:
     logging: str | None = None
     log_repo: str | None = None
     log_code: bool = False
+    run_name: str | None = None
 
     # Environment
     env_params: EnvironmentParams = EnvironmentParams(
@@ -251,7 +252,7 @@ def train_ppo(args: PPOParams, logger=DummyLogger()):
 
 if __name__ == "__main__":
     hparams: PPOParams = simple_parsing.parse(PPOParams, add_config_path_arg=True)
-    run_name = f"{hparams.env_params.env_name}-ppo"
+    run_name = hparams.run_name or f"{hparams.env_params.env_name}-ppo"
 
     with_logger(
         train_ppo,

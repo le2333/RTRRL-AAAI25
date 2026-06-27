@@ -164,9 +164,7 @@ cython_debug/
 # Visual Studio Code
 .vscode/
 
-# Logs
-.aim/
+# Logs (experiment logs under logs/ are tracked for migration)
 .wandb/
-logs/
 *.tmp
 *.temp
