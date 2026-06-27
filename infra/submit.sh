@@ -33,16 +33,20 @@ NAME=""
 MODE="${LOGGING}"
 SWEEP=""
 COUNT="1"
+QUEUE="${JOB_QUEUE}"
+JOBDEF="${JOB_DEF}"
 EXTRA=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --config)  CONFIG="$2"; shift 2 ;;
-    --entry)   ENTRY="$2"; shift 2 ;;
-    --name)    NAME="$2"; shift 2 ;;
-    --logging) MODE="$2"; shift 2 ;;
-    --sweep)   SWEEP="$2"; shift 2 ;;
-    --count)   COUNT="$2"; shift 2 ;;
+    --config)   CONFIG="$2"; shift 2 ;;
+    --entry)    ENTRY="$2"; shift 2 ;;
+    --name)     NAME="$2"; shift 2 ;;
+    --logging)  MODE="$2"; shift 2 ;;
+    --sweep)    SWEEP="$2"; shift 2 ;;
+    --count)    COUNT="$2"; shift 2 ;;
+    --queue)    QUEUE="$2"; shift 2 ;;
+    --job-def)  JOBDEF="$2"; shift 2 ;;
     --) shift; EXTRA=("$@"); break ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
@@ -78,13 +82,14 @@ CMD_JSON=$(printf '"%s",' "${CMD[@]}"); CMD_JSON="[${CMD_JSON%,}]"
 
 echo "Run name : ${NAME}"
 echo "Config   : ${CONFIG}"
+echo "Queue    : ${QUEUE}  (job def ${JOBDEF})"
 [ -n "${SWEEP}" ] && echo "Sweep    : ${SWEEP} (count ${COUNT})" || echo "Logging  : ${MODE}"
 echo "Command  : ${CMD[*]}"
 
 aws batch submit-job \
   --region "${REGION}" \
   --job-name "${NAME}" \
-  --job-queue "${JOB_QUEUE}" \
-  --job-definition "${JOB_DEF}" \
+  --job-queue "${QUEUE}" \
+  --job-definition "${JOBDEF}" \
   --container-overrides "{\"command\": ${CMD_JSON}, \"environment\": [{\"name\": \"CONFIG_B64\", \"value\": \"${CONFIG_B64}\"}]}" \
   --query "{name:jobName, id:jobId}" --output table

@@ -39,6 +39,20 @@ export SECURITY_GROUP_ID="sg-0c0ed6b927c5113dc"    # rtrrl-sg: egress all, reach
 export JOB_VCPUS="4"
 export JOB_MEMORY_MB="7168"                         # leave headroom under 8 GiB
 
+# ---- GPU Batch (optional; created by create-batch.sh --gpu) ------------------
+# Brax/JAX are GPU-first; a single mid GPU (A10G/L4) beats many CPU cores. These
+# defaults target g5.2xlarge (8 vCPU / 32 GiB / 1x A10G). The GPU image (tag
+# below) is built by the GHA matrix from infra/docker/Dockerfile.gpu.
+export GPU_IMAGE_TAG="${GPU_IMAGE_TAG:-gpu}"
+export GPU_COMPUTE_ENV="rtrrl-gpu-ce"
+export GPU_JOB_QUEUE="rtrrl-gpu-queue"
+export GPU_JOB_DEF="rtrrl-gpu-job"
+export GPU_INSTANCE_TYPE="g5.2xlarge"               # A10G; g6.2xlarge = L4
+export GPU_MAX_VCPUS="8"                            # one whole instance at a time
+export GPU_JOB_VCPUS="8"
+export GPU_JOB_MEMORY_MB="28000"                    # headroom under 32 GiB
+export GPU_PER_JOB="1"                              # GPUs per job
+
 # ---- Aim remote tracking server (on the jump host) --------------------------
 # Batch containers send live metrics here. Jump host private IP (default VPC).
 export AIM_SERVER="aim://172.31.62.192:53800"
