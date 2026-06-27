@@ -7,9 +7,11 @@ FROM python:3.12-slim AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# git is needed for the popjym git dependency.
+# git: for the popjym git dependency. build-essential (g++): some deps have no
+# prebuilt wheel and compile C/C++ extensions from source (e.g. pytinyrenderer
+# via brax). These tools stay in the builder; the runtime only copies /opt/venv.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ca-certificates \
+    && apt-get install -y --no-install-recommends git ca-certificates build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 ENV UV_PYTHON_DOWNLOADS=never \
