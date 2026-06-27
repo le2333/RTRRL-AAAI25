@@ -976,6 +976,7 @@ if __name__ == "__main__":
         hparams,
         logger_name=hparams.logging,
         project_name="RTRRL",
+        aim_repo=hparams.log_repo,
         run_name=run_name,
         hparams_type=RTRRLParams,
     )
