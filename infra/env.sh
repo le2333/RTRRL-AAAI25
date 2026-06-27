@@ -59,7 +59,10 @@ export AIM_SERVER="aim://172.31.62.192:53800"
 
 # ---- Logging + Weights & Biases ---------------------------------------------
 # Default logging backend(s) for submitted jobs: "aim", "wandb", or "aim+wandb".
-export LOGGING="${LOGGING:-aim+wandb}"
+# Default is aim-only: the W&B path rebuilds hparams via dacite.from_dict, which
+# the original code intentionally avoids. Use --logging wandb explicitly if/when
+# you want W&B (sweeps).
+export LOGGING="${LOGGING:-aim}"
 # PPO runs log to "RTRRL-PPO" (see ppo_baseline.py); keep the sweep in the same
 # project so its runs are tracked together.
 export WANDB_PROJECT="${WANDB_PROJECT:-RTRRL-PPO}"
