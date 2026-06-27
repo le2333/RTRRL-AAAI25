@@ -17,8 +17,11 @@ fi
 INSTANCE_PROFILE_ARN="arn:aws:iam::${ACCOUNT_ID}:instance-profile/${ECS_INSTANCE_ROLE}"
 
 # ---- 1. Compute environment --------------------------------------------------
-if aws batch describe-compute-environments --compute-environments "${COMPUTE_ENV}" \
-     --region "${REGION}" --query "computeEnvironments[0]" --output text 2>/dev/null | grep -q .; then
+# NOTE: query length(); an empty list's [0] prints "None" under --output text,
+# which would falsely look like the resource exists.
+CE_COUNT=$(aws batch describe-compute-environments --compute-environments "${COMPUTE_ENV}" \
+  --region "${REGION}" --query "length(computeEnvironments)" --output text 2>/dev/null || echo 0)
+if [ "${CE_COUNT}" != "0" ]; then
   echo "compute environment ${COMPUTE_ENV} already exists"
 else
   echo "creating compute environment ${COMPUTE_ENV} (${INSTANCE_TYPE}, ${PROVISIONING})..."
@@ -51,8 +54,9 @@ else
 fi
 
 # ---- 2. Job queue ------------------------------------------------------------
-if aws batch describe-job-queues --job-queues "${JOB_QUEUE}" \
-     --region "${REGION}" --query "jobQueues[0]" --output text 2>/dev/null | grep -q .; then
+JQ_COUNT=$(aws batch describe-job-queues --job-queues "${JOB_QUEUE}" \
+  --region "${REGION}" --query "length(jobQueues)" --output text 2>/dev/null || echo 0)
+if [ "${JQ_COUNT}" != "0" ]; then
   echo "job queue ${JOB_QUEUE} already exists"
 else
   echo "creating job queue ${JOB_QUEUE}..."
