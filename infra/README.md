@@ -1,99 +1,192 @@
 # RTRRL AWS infra
 
-Minimal pipeline to run RTRRL / PPO training on **AWS Batch** (EC2-backed,
-CPU, e.g. `c7a.xlarge`), with **Aim** metrics streamed live to the Aim server on
-the jump host.
+Pipeline to run RTRRL / PPO training on **AWS Batch** (EC2-backed, CPU, e.g.
+`c7a.xlarge`), with metrics streamed live to **Aim** (on the jump host) and/or
+**Weights & Biases**. This path is validated end-to-end (image build -> Batch
+job -> training -> metrics). W&B also drives **hyperparameter sweeps** (see
+"Hyperparameter sweeps" below).
 
-Scope note: checkpoint S3 sync and Aim run-resume are intentionally **not**
-wired up yet. Jobs run on on-demand EC2 (not interrupted), so getting a run to
-go end-to-end is the current priority. The resume design can be added later.
+**Not wired up yet (by choice):** S3 checkpoint sync and Aim run-resume across
+Spot interruptions. Jobs run on on-demand EC2, so a run is not interrupted and
+resume is unnecessary for now.
 
 ## Layout
 
 ```
 infra/
-├── env.sh                 # shared config (edit me first)
-├── build-and-push.sh      # build CPU image -> push to ECR
-├── submit.sh              # submit one training run (per config)
+├── env.sh                 # shared config (region, names, subnets, SG, Aim, W&B)
+├── build-and-push.sh      # MANUAL local image build -> ECR (fallback only)
+├── submit.sh              # submit one training run (or a W&B sweep agent)
+├── sweep.yaml             # W&B sweep definition for the PPO baseline
+├── sweep.sh               # create a sweep + launch parallel agents on Batch
 ├── docker/
-│   ├── Dockerfile         # CPU image: uv-installed deps + AWS CLI
+│   ├── Dockerfile         # CPU image: uv-installed deps (+ AWS CLI, build-essential)
 │   └── entrypoint.sh      # decodes CONFIG_B64 -> /tmp/run-config.yml, runs cmd
 ├── batch/
 │   └── create-batch.sh    # compute environment + queue + job definition
 ├── iam/                   # IAM roles/policies (see iam/README.md)
 └── monitoring/            # CloudWatch agent config for the jump host
+
+.github/workflows/build-image.yml   # builds + pushes the image on push to main
 ```
+
+## How the image is built
+
+Primary path is **GitHub Actions** (`.github/workflows/build-image.yml`): on a
+push to `main` that touches `**.py`, `pyproject.toml`, `uv.lock`,
+`infra/docker/**`, or the workflow itself, it assumes `rtrrl-github-actions-role`
+via OIDC, creates the ECR repo if needed, builds the CPU image, and pushes
+`rtrrl:cpu` and `rtrrl:<sha>`. Just push your changes; no local Docker needed.
+
+`infra/build-and-push.sh` is only a manual fallback (needs Docker locally).
 
 ## One-time setup order
 
 1. **IAM** — `infra/iam/setup-iam.sh` (creates `rtrrl-ecs-instance-role`,
-   `rtrrl-batch-job-role`; control-plane perms already on `controller`).
-2. **S3 bucket** (only needed later for checkpoints; not required to run):
+   `rtrrl-batch-job-role`, `rtrrl-batch-execution-role`; control-plane perms
+   live on the `controller` role).
+2. **GitHub OIDC** — `infra/iam/setup-github-oidc.sh` (OIDC provider +
+   `rtrrl-github-actions-role`, so Actions can push to ECR).
+3. **(For W&B) Create the API-key secret** — once, with admin/console creds
+   (keeps the key out of git and job overrides):
+   ```bash
+   aws secretsmanager create-secret --name rtrrl/wandb-api-key \
+     --secret-string '<your-wandb-api-key>' --region eu-north-1
+   ```
+   Paste the returned **full ARN** into `WANDB_SECRET_ARN` in `infra/env.sh`.
+   The execution role (`rtrrl-batch-execution-role`) already has read access.
+4. **Edit `infra/env.sh`** — set `SUBNET_IDS`, `SECURITY_GROUP_ID`, `AIM_SERVER`
+   (jump host private IP), `WANDB_SECRET_ARN` / `WANDB_PROJECT` / `WANDB_ENTITY`,
+   default `LOGGING`, confirm `ECR_REPO`, `INSTANCE_TYPE`.
+5. **Build image** — push to `main` and let GitHub Actions build it.
+6. **Create Batch resources** — `infra/batch/create-batch.sh` (idempotent;
+   re-registers the job definition each run). Re-run it after setting
+   `WANDB_SECRET_ARN` so the job definition injects `WANDB_API_KEY`.
+7. **(Optional) S3 bucket** — only needed once checkpointing is added:
    ```bash
    aws s3api create-bucket --bucket "$S3_BUCKET" --region eu-north-1 \
      --create-bucket-configuration LocationConstraint=eu-north-1
    ```
-3. **Edit `infra/env.sh`** — set `SUBNET_IDS`, `SECURITY_GROUP_ID`, and
-   `AIM_SERVER` (jump host private IP), confirm `ECR_REPO`, `INSTANCE_TYPE`.
-4. **Build + push image**:
-   ```bash
-   infra/build-and-push.sh
-   ```
-5. **Create Batch resources**:
-   ```bash
-   infra/batch/create-batch.sh
-   ```
 
 ## Run training
 
-Start the Aim server on the jump host (once), bound so the compute subnet can
-reach it on 53800:
+1. **Start the Aim server on the jump host** (once; leave it running). It must be
+   up *before* submitting, or metric logging from the job will fail:
+
+   ```bash
+   nohup uv run aim server --repo logs/aim/.aim --host 0.0.0.0 --port 53800 \
+     > logs/aim-server.log 2>&1 &
+   ```
+
+2. **Submit runs** (one per config; loop for parallel runs). Each `--name`
+   becomes its own run. Logging defaults to `$LOGGING` (`aim+wandb`); override
+   with `--logging aim|wandb|aim+wandb`:
+
+   ```bash
+   # RTRRL (dual logging by default)
+   infra/submit.sh --config config/rtrrl_brax_halfcheetah_paral1.yml --name hc_p1
+
+   # PPO baseline, Aim only
+   infra/submit.sh --entry ppo_baseline.py --logging aim \
+     --config config/ppo_hopper_default_2m.yml --name ppo_hopper
+
+   # Override params without a new config file (e.g. a seed sweep)
+   for s in 1 2 3; do
+     infra/submit.sh --config config/rtrrl_brax_halfcheetah_paral1.yml \
+       --name hc_seed$s -- --seed $s
+   done
+
+   # Smoke test: a few episodes to validate the path quickly
+   infra/submit.sh --config config/rtrrl_brax_halfcheetah_paral1.yml \
+     --name smoke -- --episodes 30
+   ```
+
+3. **Watch a job**:
+
+   ```bash
+   aws batch describe-jobs --region eu-north-1 --jobs <jobId> \
+     --query "jobs[0].{status:status,exit:container.exitCode,reason:container.reason,log:container.logStreamName}"
+
+   # full container logs (CloudWatch)
+   aws logs get-log-events --region eu-north-1 --log-group-name /aws/batch/job \
+     --log-stream-name "<logStreamName>" --start-from-head \
+     --query "events[].message" --output text
+   ```
+
+4. **View metrics in Aim** — on the jump host, start the UI and forward the port
+   (see the repo root README "Logging" section):
+
+   ```bash
+   uv run aim up --repo logs/aim/.aim --host 0.0.0.0 --port 43800
+   ```
+
+   W&B runs appear at `https://wandb.ai/<entity>/RTRRL`.
+
+## Hyperparameter sweeps (W&B)
+
+W&B Sweeps drive HPO; agents run as Batch jobs and pull trials from the W&B
+controller. The sweep maximizes `eval/best_eval_reward` for the PPO baseline.
+
+Sweep parameters use **dotted keys** (e.g. `ppo_overrides.learning_rate`) so they
+land in nested `PPOParams` fields. `logging_util.with_logger` reads
+`wandb.config`, expands the dotted keys, and merges them into the dataclass
+before training — so they reach `brax` `ppo.train()`. The sweep `command` has no
+`${args}`, so params flow only through `wandb.config` (not the CLI).
 
 ```bash
-uv run aim server --repo logs/aim/.aim --host 0.0.0.0 --port 53800
+# One-time on the jump host: authenticate W&B (key stored in ~/.netrc).
+uv run wandb login
+
+# 1) Create the sweep (edit infra/sweep.yaml to adjust ranges first).
+infra/sweep.sh create
+#    -> prints a sweep id like <entity>/RTRRL/abc123
+
+# 2) Launch N parallel agents on Batch, each with a base config (env +
+#    num_timesteps come from this config; the sweep overrides ppo_overrides.*).
+infra/sweep.sh launch <entity>/RTRRL/abc123 4 \
+  --config config/ppo_hopper_default_2m.yml --count 1
 ```
 
-Submit runs (one per config; loop for sweeps):
+Each agent injects the base config (`CONFIG_B64` -> `/tmp/run-config.yml`) and
+runs `wandb agent`, which executes `ppo_baseline.py` with the trial's params.
+Increase `--count` to have one agent run several trials sequentially, or raise
+the number of agents (and Batch `maxvCpus`) for more parallelism. Sweep runs log
+to **W&B only** by default (the sweep lives there); add `aim` to the `command` in
+`infra/sweep.yaml` if you also want them in the Aim repo.
 
-```bash
-# RTRRL
-infra/submit.sh --config config/rtrrl_brax_hopper_paral1.yml
+## Caveats / gotchas
 
-# PPO baseline
-infra/submit.sh --entry ppo_baseline.py --config config/ppo_hopper_default_2m.yml
-
-# Override params without a new config file (parallel scale etc.)
-infra/submit.sh --config config/rtrrl_brax_hopper_paral1.yml --name hopper_b8 \
-  -- --batch_size 8 --seed 1
-```
-
-Watch a job:
-
-```bash
-aws batch describe-jobs --region eu-north-1 --jobs <jobId> \
-  --query "jobs[0].{status:status,reason:statusReason}"
-```
+- **Do NOT upgrade JAX past 0.5.0.** `pyproject.toml` pins `jax==0.5.0` /
+  `jaxlib==0.5.0` on purpose. JAX 0.6+ removed the `jax.jax` self-alias used by
+  `envs/wrappers.py` (`jax.jax.tree.map`) and changed array types so `aim` 3.28
+  can no longer track them. Re-running `uv lock` without the pin will silently
+  re-break training. If you regenerate the lock, keep the pin.
+- **The Aim server must be running on the jump host before you submit.** The job
+  connects to `AIM_SERVER` (`aim://<jump-host-private-ip>:53800`) from
+  `infra/env.sh`. If the jump host IP changes, update `AIM_SERVER`.
+- **Compute environment scales to zero when idle** (`minvCpus=0`). The first job
+  after idle waits ~1-2 min for an instance to launch; there is no cost while no
+  job runs.
+- **Configs are injected at submit time, not baked into the image.** `submit.sh`
+  base64-encodes the chosen YAML into `CONFIG_B64`; the entrypoint decodes it to
+  `/tmp/run-config.yml`. Editing or adding a config needs no image rebuild — just
+  re-submit. (Configs are tiny YAML, so inlining beats S3.)
+- **Builder needs a C++ toolchain.** `pytinyrenderer` (via `brax`) has no wheel
+  and compiles from source, so the Dockerfile installs `build-essential` in the
+  builder stage (stripped from the runtime image).
+- **GitHub Actions build cache** requires the `docker-container` buildx driver
+  (the workflow sets it up). The default docker driver cannot export `type=gha`.
+- **W&B needs the API key in the container.** The job definition injects
+  `WANDB_API_KEY` from Secrets Manager via the execution role
+  (`rtrrl-batch-execution-role`). If `WANDB_SECRET_ARN` is empty, `create-batch.sh`
+  registers the job def WITHOUT it — then `--logging wandb`/`aim+wandb` jobs fail.
+  Set the ARN and re-run `create-batch.sh`. The key is never put in git or job
+  overrides.
 
 ## Networking prerequisites
 
-- The compute environment subnet must be able to pull from **ECR** and reach
-  **S3** — if it is a private subnet, add a NAT gateway or VPC endpoints
-  (S3 gateway endpoint + ECR/ECR-API/logs interface endpoints).
-- The **security group** must allow the compute instances to reach the jump
-  host on TCP **53800** (Aim), and allow egress for ECR/S3.
-
-## Different configs
-
-Configs live in `config/` but are **not** baked into the image (see
-`.dockerignore`). At submit time `submit.sh` base64-encodes the chosen YAML into
-the `CONFIG_B64` env var; the container entrypoint decodes it to
-`/tmp/run-config.yml`, which the training command reads via `--config_path`.
-
-This means:
-- Editing or adding a config needs **no image rebuild** — just re-submit.
-- Each job carries the exact config it ran with (visible in the job's overrides).
-- Pick one per run with `--config`; tweak individual params with trailing
-  `-- --key value` overrides.
-
-Configs are tiny YAML, so inlining them is simpler than S3. (S3 is reserved for
-checkpoints later, where payloads are large.)
+- The compute subnet must reach **ECR** and **S3**. Using a public subnet with
+  auto-assigned public IPs (current setup) needs no NAT/VPC endpoints.
+- The jump host security group must allow inbound TCP **53800** from the compute
+  security group (Aim); the compute SG needs egress for ECR/S3 and to the jump
+  host.

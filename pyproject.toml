@@ -25,6 +25,7 @@ dependencies = [
     "popjym @ git+https://github.com/EdanToledo/popjym.git",
     "flashbax>=0.1.2,<0.2",
     "aim==3.28.0",
+    "wandb>=0.18,<0.20",
     "setuptools>=80.0.0,<81",
 ]
 

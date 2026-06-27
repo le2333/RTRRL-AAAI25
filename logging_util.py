@@ -29,25 +29,6 @@ class ExceptionPrinter(contextlib.AbstractContextManager):
         return False
 
 
-def wandb_wrapper(project_name, func, hparams, params_type):
-    """Init wandb and evaluate function."""
-    global wandb
-    import wandb
-
-    logger = WandbLogger()
-
-    with wandb.init(
-        project=project_name, config=hparams, mode="disabled" if hparams.debug else "online", dir="logs/"
-    ), ExceptionPrinter():
-        # If called by wandb.agent,
-        # this config will be set by Sweep Controller
-        hparams = from_dict(params_type, update_nested_dict(asdict(hparams), wandb.config))
-        if hparams.log_code:
-            wandb.run.log_code()
-
-        return func(hparams, logger=logger)
-
-
 class DummyLogger(dict, object):
     """Dummy Logger that does nothing besides acting as dictionary."""
 
@@ -262,6 +243,88 @@ class WandbLogger(DummyLogger):
         wandb.log({name: wandb.Video(frames, fps=fps, caption=caption)}, step=step)
 
 
+class MultiLogger(DummyLogger):
+    """Fan out logging calls to several loggers (e.g. Aim + W&B).
+
+    Write-like calls go to every logger; item reads come from the first one.
+    """
+
+    def __init__(self, loggers):
+        """Store the wrapped loggers (order matters: reads use the first)."""
+        self.loggers = list(loggers)
+
+    def __repr__(self) -> str:  # noqa
+        return "MultiLogger(" + ", ".join(repr(l) for l in self.loggers) + ")"
+
+    @override
+    def log(self, metrics, step=None):
+        """Forward metrics to every logger."""
+        for l in self.loggers:
+            l.log(metrics, step=step)
+
+    @override
+    def log_params(self, params_dict):
+        """Forward hyperparameters to every logger."""
+        for l in self.loggers:
+            l.log_params(params_dict)
+
+    @override
+    def finalize(self, *args, **kwargs):
+        """Forward finalize to every logger."""
+        for l in self.loggers:
+            l.finalize(*args, **kwargs)
+
+    @override
+    def save_model(self, *args, **kwargs):
+        """Save with whichever logger supports it (skip the ones that don't)."""
+        for l in self.loggers:
+            try:
+                l.save_model(*args, **kwargs)
+            except NotImplementedError:
+                pass
+
+    @override
+    def log_video(self, *args, **kwargs):
+        """Forward video logging to every logger."""
+        for l in self.loggers:
+            l.log_video(*args, **kwargs)
+
+    def __setitem__(self, key, value):
+        """Set the summary value on every logger."""
+        for l in self.loggers:
+            l[key] = value
+
+    def __getitem__(self, key):
+        """Read the summary value from the first logger."""
+        return self.loggers[0][key]
+
+
+def _expand_dotted(flat: dict) -> dict:
+    """Expand flat dotted keys into a nested dict.
+
+    `{"ppo_overrides.learning_rate": 1e-3}` -> `{"ppo_overrides": {"learning_rate": 1e-3}}`.
+    W&B sweep controllers inject parameters as flat keys; dotted names let a
+    sweep target nested dataclass fields (e.g. ppo_overrides.* / env_params.*).
+    """
+    nested: dict = {}
+    for key, value in dict(flat).items():
+        parts = str(key).split(".")
+        node = nested
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = value
+    return nested
+
+
+def _parse_backends(logger_name) -> set:
+    """Parse a logger spec like 'aim+wandb' / 'wandb,aim' / 'both' into a set."""
+    if not logger_name:
+        return set()
+    if logger_name == "both":
+        return {"aim", "wandb"}
+    return {b.strip() for b in logger_name.replace("+", ",").split(",") if b.strip()}
+
+
 def with_logger(
     func: Callable,
     hparams: dict,
@@ -271,18 +334,55 @@ def with_logger(
     run_name="",
     hparams_type=None,
 ):
-    """Wrap training function with logger."""
-    if logger_name == "wandb":
+    """Wrap a training function with one or more loggers.
 
-        def pick_fun_and_run(_hparams, logger):
-            return func(_hparams, logger=logger)
-
-        return wandb_wrapper(project_name, pick_fun_and_run, hparams, params_type=hparams_type)
-    elif logger_name == "aim":
-        logger = AimLogger(project_name, repo=aim_repo, hparams=hparams, run_name=run_name)
-        return func(hparams, logger=logger)  # TODO: Consider try catch to avoid broken aim repositories
-    else:
+    `logger_name` may be 'aim', 'wandb', or both ('aim+wandb' / 'both'). When
+    W&B is enabled the run is created inside `wandb.init` so a W&B Sweep
+    controller can inject swept parameters via `wandb.config`; those are merged
+    back into `hparams` (supporting dotted keys for nested fields) before the
+    Aim logger and training run see them.
+    """
+    backends = _parse_backends(logger_name)
+    if not backends:
         return func(hparams)
+
+    use_wandb = "wandb" in backends
+    use_aim = "aim" in backends
+    base = hparams if isinstance(hparams, dict) else asdict(hparams)
+
+    if use_wandb:
+        global wandb
+        import wandb
+
+        # debug -> disabled; otherwise let WANDB_MODE env decide (defaults online).
+        wandb_mode = "disabled" if getattr(hparams, "debug", 0) else None
+        with wandb.init(
+            project=project_name,
+            config=base,
+            mode=wandb_mode,
+            dir="logs/",
+            name=run_name or None,
+        ), ExceptionPrinter():
+            # Sweep controller sets wandb.config; merge it back (dotted keys ->
+            # nested) so swept params reach nested dataclass fields and Aim.
+            merged = update_nested_dict(asdict(hparams), _expand_dotted(wandb.config))
+            if hparams_type is not None:
+                hparams = from_dict(hparams_type, merged)
+            if getattr(hparams, "log_code", False):
+                wandb.run.log_code()
+
+            loggers = []
+            if use_aim:
+                loggers.append(
+                    AimLogger(project_name, repo=aim_repo, hparams=hparams, run_name=run_name)
+                )
+            loggers.append(WandbLogger())
+            logger = loggers[0] if len(loggers) == 1 else MultiLogger(loggers)
+            return func(hparams, logger=logger)
+
+    # Aim only.
+    logger = AimLogger(project_name, repo=aim_repo, hparams=hparams, run_name=run_name)
+    return func(hparams, logger=logger)
 
 
 def calc_norms(norm_params: dict = {}, leaf_norm_params: dict = {}):

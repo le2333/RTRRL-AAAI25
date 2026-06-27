@@ -33,6 +33,7 @@ render() { # render <src.json> <dst.json>
 
 render "${DIR}/jump-host-policy.json" "${BUILD}/jump-host-policy.json"
 render "${DIR}/batch-job-policy.json" "${BUILD}/batch-job-policy.json"
+render "${DIR}/batch-execution-policy.json" "${BUILD}/batch-execution-policy.json"
 
 # 1) Jump host: attach control-plane perms to the EXISTING role ----------------
 #    (Batch submit/monitor, S3 artifacts, ECR push/pull, CW logs read, PassRole)
@@ -74,6 +75,18 @@ aws iam create-role --role-name "${JOB_ROLE}" \
 aws iam put-role-policy --role-name "${JOB_ROLE}" \
   --policy-name rtrrl-batch-job-inline \
   --policy-document "file://${BUILD}/batch-job-policy.json"
+
+# 3b) Batch execution role (ECS pulls image + injects secrets into the task) ----
+#     Needed so the job definition can inject WANDB_API_KEY from Secrets Manager.
+EXEC_ROLE="rtrrl-batch-execution-role"
+aws iam create-role --role-name "${EXEC_ROLE}" \
+  --assume-role-policy-document "file://${DIR}/batch-task-trust.json" \
+  2>/dev/null || echo "role ${EXEC_ROLE} exists"
+aws iam attach-role-policy --role-name "${EXEC_ROLE}" \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+aws iam put-role-policy --role-name "${EXEC_ROLE}" \
+  --policy-name rtrrl-batch-execution-secrets \
+  --policy-document "file://${BUILD}/batch-execution-policy.json"
 
 # 4) Optional: Spot fleet role (only if the compute env uses Spot) --------------
 if [ "${USE_SPOT}" = "true" ]; then

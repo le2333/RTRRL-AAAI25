@@ -19,13 +19,16 @@ uv run python rtrrl.py
 
 ## Loggging
 
-You can log results using [`aim`](https://aimstack.readthedocs.io/en/latest/index.html) or [`wandb`](https://wandb.ai/). Aim is installed as a project dependency for PPO/RTRRL experiment tracking; W&B remains optional.
+You can log results using [`aim`](https://aimstack.readthedocs.io/en/latest/index.html), [`wandb`](https://wandb.ai/), or both at once. Aim runs locally on the jump host; W&B is cloud-hosted and also drives hyperparameter sweeps.
 
-You can enable logging by providing the `--logging` argument.
+You can enable logging by providing the `--logging` argument: `aim`, `wandb`, or `aim+wandb` (dual logging — metrics go to both).
 
 ```
 uv run python rtrrl.py --logging aim
+uv run python rtrrl.py --logging aim+wandb   # dual logging
 ```
+
+W&B needs an API key: `wandb login` locally, or set `WANDB_API_KEY` (on AWS Batch it is injected from Secrets Manager — see `infra/README.md`). For hyperparameter sweeps see the "Hyperparameter sweeps" section of `infra/README.md`.
 
 For PPO runs, set `logging: "aim"` and `log_repo` in the YAML config. For
 example, `config/ppo_hopper_default_2m.yml` writes to `logs/aim/.aim`.
@@ -47,6 +50,22 @@ http://localhost:43800
 If Cursor shows an "Open in Browser" prompt for the forwarded port, use that
 link. Use Aim's run list, metric filters, or the run hash printed by your
 tracking workflow to find a specific run.
+
+## Running on AWS Batch
+
+To run training at scale on AWS Batch (EC2-backed CPU compute) with metrics
+streamed to Aim and/or W&B (and W&B-driven hyperparameter sweeps), see
+[`infra/README.md`](infra/README.md). In
+short, after the one-time setup you push to `main` (GitHub Actions builds and
+pushes the image) and submit runs with:
+
+```
+infra/submit.sh --config config/rtrrl_brax_halfcheetah_paral1.yml --name my_run
+```
+
+Configs are injected at submit time (not baked into the image), so changing a
+config needs no rebuild. **Note:** the pipeline pins `jax==0.5.0`; see the
+caveats in `infra/README.md` before upgrading.
 
 ## CUDA support
 

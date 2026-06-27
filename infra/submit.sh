@@ -1,18 +1,27 @@
 #!/usr/bin/env bash
-# Submit one training run to AWS Batch.
+# Submit one training run (or a W&B sweep agent) to AWS Batch.
 #
-# Usage:
-#   infra/submit.sh --config config/rtrrl_brax_hopper_paral1.yml [options] [-- extra args]
+# Normal run:
+#   infra/submit.sh --config config/rtrrl_brax_hopper_paral1.yml [options] [-- extra]
+#
+# W&B sweep agent (the sweep selects hyperparameters; see infra/sweep.yaml):
+#   infra/submit.sh --sweep <entity/project/sweep_id> --config config/ppo_X.yml \
+#     --count 1 --name sweep_w1
 #
 # Options:
-#   --config PATH     YAML config to run (required)
+#   --config PATH     YAML config to run (required; base config for sweeps too)
 #   --entry FILE      entry script: rtrrl.py (default) or ppo_baseline.py
-#   --name NAME       run name (default: derived from the config filename)
-#   --no-aim          do not log to the jump-host Aim server
-#   -- ...            everything after -- is passed verbatim as CLI overrides
-#                     to the training script (e.g. -- --batch_size 8 --seed 1)
+#   --name NAME       job/run name (default: derived from the config filename)
+#   --logging MODE    aim | wandb | aim+wandb (default: $LOGGING from env.sh)
+#   --sweep ID        run `wandb agent ID` instead of a single training command
+#   --count N         trials per agent job in sweep mode (default 1)
+#   -- ...            extra args appended verbatim to the training command
+#                     (normal mode only; e.g. -- --seed 1)
 #
-# Each run gets a unique --name => its own Aim run; submit in a loop for sweeps.
+# Each --name gets its own job; submit in a loop for sweeps/seed sweeps. The
+# config is base64-injected (CONFIG_B64) and decoded to /tmp/run-config.yml in
+# the container. WANDB_API_KEY is injected by the job definition (Secrets
+# Manager); see infra/env.sh / infra/iam/setup-iam.sh.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -21,47 +30,55 @@ source "${HERE}/env.sh"
 ENTRY="rtrrl.py"
 CONFIG=""
 NAME=""
-USE_AIM="true"
+MODE="${LOGGING}"
+SWEEP=""
+COUNT="1"
 EXTRA=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --config) CONFIG="$2"; shift 2 ;;
-    --entry)  ENTRY="$2"; shift 2 ;;
-    --name)   NAME="$2"; shift 2 ;;
-    --no-aim) USE_AIM="false"; shift ;;
+    --config)  CONFIG="$2"; shift 2 ;;
+    --entry)   ENTRY="$2"; shift 2 ;;
+    --name)    NAME="$2"; shift 2 ;;
+    --logging) MODE="$2"; shift 2 ;;
+    --sweep)   SWEEP="$2"; shift 2 ;;
+    --count)   COUNT="$2"; shift 2 ;;
     --) shift; EXTRA=("$@"); break ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
 done
 
 [ -z "${CONFIG}" ] && { echo "ERROR: --config is required" >&2; exit 1; }
+[ -f "${CONFIG}" ] || { echo "ERROR: config not found: ${CONFIG}" >&2; exit 1; }
 
 # Run name: default to the config basename (sanitized).
 if [ -z "${NAME}" ]; then
   NAME="$(basename "${CONFIG}" .yml | tr -c 'A-Za-z0-9_.-' '_')"
 fi
 
-[ -f "${CONFIG}" ] || { echo "ERROR: config not found: ${CONFIG}" >&2; exit 1; }
-
-# The config is NOT baked into the image. We inline it here: base64-encode the
-# YAML and pass it as the CONFIG_B64 env var; the container entrypoint decodes it
-# to /tmp/run-config.yml, which the training command reads via --config_path.
-# base64 -w0 emits a single JSON-safe line ([A-Za-z0-9+/=], no quotes/newlines).
+# The config is injected (not baked into the image): base64-encode the YAML; the
+# entrypoint decodes it to /tmp/run-config.yml. base64 -w0 is JSON-safe.
 CONFIG_B64=$(base64 -w0 "${CONFIG}")
 
-# Build the training command (reads the decoded config inside the container).
-CMD=(python "${ENTRY}" --config_path /tmp/run-config.yml)
-if [ "${USE_AIM}" = "true" ]; then
-  CMD+=(--logging aim --log_repo "${AIM_SERVER}")
+if [ -n "${SWEEP}" ]; then
+  # Sweep mode: the agent pulls hyperparameters from the W&B sweep controller and
+  # runs the program defined in infra/sweep.yaml (which reads /tmp/run-config.yml).
+  CMD=(wandb agent --count "${COUNT}" "${SWEEP}")
+else
+  # Normal mode: run the training command directly.
+  CMD=(python "${ENTRY}" --config_path /tmp/run-config.yml --logging "${MODE}")
+  case "${MODE}" in
+    *aim*) CMD+=(--log_repo "${AIM_SERVER}") ;;
+  esac
+  CMD+=("${EXTRA[@]}")
 fi
-CMD+=("${EXTRA[@]}")
 
 # JSON array for the container command override.
 CMD_JSON=$(printf '"%s",' "${CMD[@]}"); CMD_JSON="[${CMD_JSON%,}]"
 
 echo "Run name : ${NAME}"
 echo "Config   : ${CONFIG}"
+[ -n "${SWEEP}" ] && echo "Sweep    : ${SWEEP} (count ${COUNT})" || echo "Logging  : ${MODE}"
 echo "Command  : ${CMD[*]}"
 
 aws batch submit-job \

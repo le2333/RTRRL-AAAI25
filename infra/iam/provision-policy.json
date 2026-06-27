@@ -89,13 +89,28 @@
       "Action": "iam:PassRole",
       "Resource": [
         "arn:aws:iam::007122174918:role/rtrrl-ecs-instance-role",
-        "arn:aws:iam::007122174918:role/rtrrl-batch-job-role"
+        "arn:aws:iam::007122174918:role/rtrrl-batch-job-role",
+        "arn:aws:iam::007122174918:role/rtrrl-batch-execution-role"
       ],
       "Condition": {
         "StringEquals": {
           "iam:PassedToService": [ "ec2.amazonaws.com", "ecs-tasks.amazonaws.com" ]
         }
       }
+    },
+    {
+      "Sid": "ManageWandbSecret",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:CreateSecret",
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:UpdateSecret",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:TagResource",
+        "secretsmanager:DeleteSecret"
+      ],
+      "Resource": "arn:aws:secretsmanager:eu-north-1:007122174918:secret:rtrrl/*"
     }
   ]
 }

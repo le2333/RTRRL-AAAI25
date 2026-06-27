@@ -68,7 +68,8 @@
       "Action": "iam:PassRole",
       "Resource": [
         "arn:aws:iam::__ACCOUNT_ID__:role/rtrrl-batch-job-role",
-        "arn:aws:iam::__ACCOUNT_ID__:role/rtrrl-ecs-instance-role"
+        "arn:aws:iam::__ACCOUNT_ID__:role/rtrrl-ecs-instance-role",
+        "arn:aws:iam::__ACCOUNT_ID__:role/rtrrl-batch-execution-role"
       ]
     }
   ]

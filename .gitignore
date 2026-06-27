@@ -166,5 +166,8 @@ cython_debug/
 
 # Logs (experiment logs under logs/ are tracked for migration)
 .wandb/
+# W&B run data (created when wandb.init dir="logs/")
+wandb/
+logs/wandb/
 *.tmp
 *.temp

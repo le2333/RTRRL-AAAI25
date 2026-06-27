@@ -69,6 +69,18 @@ else
 fi
 
 # ---- 3. Job definition (base; command is overridden at submit time) ----------
+# If a W&B secret ARN is configured, attach an execution role + inject the API
+# key from Secrets Manager so jobs can log to W&B.
+EXEC_FRAG=""
+SECRETS_FRAG=""
+if [ -n "${WANDB_SECRET_ARN:-}" ]; then
+  EXEC_FRAG="\"executionRoleArn\": \"${BATCH_EXEC_ROLE_ARN}\","
+  SECRETS_FRAG="\"secrets\": [{\"name\": \"WANDB_API_KEY\", \"valueFrom\": \"${WANDB_SECRET_ARN}\"}],"
+  echo "job definition will inject WANDB_API_KEY from ${WANDB_SECRET_ARN}"
+else
+  echo "WANDB_SECRET_ARN not set: job definition will NOT inject WANDB_API_KEY (aim-only)"
+fi
+
 echo "registering job definition ${JOB_DEF}..."
 aws batch register-job-definition \
   --region "${REGION}" \
@@ -79,6 +91,8 @@ aws batch register-job-definition \
     \"image\": \"${IMAGE}\",
     \"command\": [\"python\", \"rtrrl.py\", \"--help\"],
     \"jobRoleArn\": \"${BATCH_JOB_ROLE_ARN}\",
+    ${EXEC_FRAG}
+    ${SECRETS_FRAG}
     \"resourceRequirements\": [
       {\"type\": \"VCPU\", \"value\": \"${JOB_VCPUS}\"},
       {\"type\": \"MEMORY\", \"value\": \"${JOB_MEMORY_MB}\"}
