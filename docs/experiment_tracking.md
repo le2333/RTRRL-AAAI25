@@ -8,7 +8,7 @@ comparison work.
 Run the PPO baseline with the same config-loading style as `rtrrl.py`:
 
 ```bash
-poetry run python ppo_baseline.py --config_path config/ppo_smoke.yml
+uv run python ppo_baseline.py --config_path config/ppo_smoke.yml
 ```
 
 `config/ppo_smoke.yml` is only for smoke verification. It uses small explicit
@@ -40,7 +40,7 @@ explicitly to choose a different logging density for a run.
 Start the Aim UI from this repository directory:
 
 ```bash
-poetry run aim up --repo logs/aim_smoke/.aim
+uv run aim up --repo logs/aim_smoke/.aim
 ```
 
 Use the same `log_repo` value in the config and UI command. Smoke runs should

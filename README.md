@@ -4,14 +4,17 @@ Code Appendix for the Paper "[Real-Time Recurrent Reinforcement Learning](https:
 
 ## Install
 
-1. Install Poetry: https://python-poetry.org/docs/#installation
-2. Install dependencies using `poetry install`
-3. Launch poetry shell: `poetry shell`
+1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
+2. Sync dependencies from the repository root:
+
+```
+uv sync
+```
 
 ## Run
 
 ```
-python rtrrl.py
+uv run python rtrrl.py
 ```
 
 ## Loggging
@@ -21,7 +24,7 @@ You can log results using [`aim`](https://aimstack.readthedocs.io/en/latest/inde
 You can enable logging by providing the `--logging` argument.
 
 ```
-python rtrrl.py --logging aim
+uv run python rtrrl.py --logging aim
 ```
 
 For PPO runs, set `logging: "aim"` and `log_repo` in the YAML config. For
@@ -31,7 +34,7 @@ To view Aim results when this project is running on a remote machine, start the
 Aim UI from the repository root in the remote project terminal:
 
 ```
-poetry run aim up --repo logs/aim/.aim --host 0.0.0.0 --port 43800
+uv run aim up --repo logs/aim/.aim --host 0.0.0.0 --port 43800
 ```
 
 Then forward remote port `43800` through Cursor/SSH and open the forwarded local
@@ -51,22 +54,22 @@ A GPU can speed up training when using large batch sizes but will slow it down f
 
 The project pins JAX through its dependency graph. For JAX `0.5.0`, CUDA support
 is provided by the plugin-based `jax[cuda12]` extra rather than a separate CUDA
-`jaxlib` wheel. Install the CUDA 12 plugin into the Poetry environment with:
+`jaxlib` wheel. Install the CUDA 12 plugin into the uv environment with:
 
 ```
-poetry run poe install_jax_cuda12
+uv run poe install_jax_cuda12
 ```
 
 Check the active backend and devices:
 
 ```
-poetry run python -c "import jax; print(jax.default_backend()); print(jax.devices())"
+uv run python -c "import jax; print(jax.default_backend()); print(jax.devices())"
 ```
 
 To force CPU execution even when a GPU backend is installed:
 
 ```
-JAX_PLATFORM_NAME=cpu poetry run python -c "import jax; print(jax.default_backend()); print(jax.devices())"
+JAX_PLATFORM_NAME=cpu uv run python -c "import jax; print(jax.default_backend()); print(jax.devices())"
 ```
 
 ## Algorithm
@@ -90,12 +93,12 @@ JAX_PLATFORM_NAME=cpu poetry run python -c "import jax; print(jax.default_backen
 
 ## Configurables
 This is an incomplete table of configurables.
-Run `poetry run python rtrrl.py --help` to find out more.
+Run `uv run python rtrrl.py --help` to find out more.
 
 There is a preset for `brax` environments that can be used by providing the config path:
 
 ```
-python rtrrl.py --config_path configs/brax.yml
+uv run python rtrrl.py --config_path configs/brax.yml
 ```
 
 |Name | Description | Default Value |

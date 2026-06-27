@@ -1,33 +1,30 @@
-[tool.poetry]
+[project]
 name = "rtrrl"
 version = "0.1.0"
 description = ""
-authors = ["Anonymous <anon@anon.anon>"]
 readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "flax>=0.10.2,<0.11",
+    "plotly>=5.24.1,<6",
+    "dacite>=1.8.1,<2",
+    "simple-parsing>=0.1.6,<0.2",
+    "distrax>=0.1.5,<0.2",
+    "tqdm>=4.67.1,<5",
+    "poethepoet>=0.31.1,<0.32",
+    "gymnax>=0.0.8,<0.0.9",
+    "brax>=0.10.4,<0.11",
+    "optax>=0.2.2,<0.3",
+    "pyhopper>=1.2.3,<2",
+    "mujoco-mjx>=3.1.6,<4",
+    "popjym @ git+https://github.com/EdanToledo/popjym.git",
+    "flashbax>=0.1.2,<0.2",
+    "aim==3.28.0",
+    "setuptools>=80.0.0,<81",
+]
 
-[tool.poetry.dependencies]
-python = "^3.10"
-flax = "^0.10.2"
-plotly = "^5.24.1"
-dacite = "^1.8.1"
-simple-parsing = "^0.1.6"
-distrax = "^0.1.5"
-tqdm = "^4.67.1"
-poethepoet = "^0.31.1"
-gymnax = "^0.0.8"
-brax = "^0.10.4"
-optax = "^0.2.2"
-pyhopper = "^1.2.3"
-mujoco-mjx = "^3.1.6"
-popjym = {git = "https://github.com/EdanToledo/popjym.git"}
-flashbax = "^0.1.2"
-aim = {version = "3.28.0", python = ">=3.10,<3.15"}
-setuptools = "^80.0.0"
-
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+[tool.uv]
+package = false
 
 [tool.poe.tasks]
-install_jax_cuda12 = "python -m pip install \"jax[cuda12]==0.5.0\""
+install_jax_cuda12 = "uv pip install \"jax[cuda12]==0.5.0\""
