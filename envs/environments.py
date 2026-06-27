@@ -1,7 +1,7 @@
 """Wrappers to support Brax and Gymnax training."""
 
 from dataclasses import dataclass, field
-from typing import Iterable, Literal, Optional
+from typing import Literal, Optional
 import gym
 from functools import partial
 from jax import numpy as jnp
@@ -31,7 +31,10 @@ class EnvironmentParams:
 
     env_name: str = "CartPole-v1"  # If starts with 'brax', will use brax env, otherwise gymnax.
     reward_scaling: int = 1  # Scaling factor for the rewards.
-    obs_mask: Optional[Iterable[int] | Literal["odd", "even", "first_half"]] = None  # Mask for the observation space.
+    # list[int] (not Iterable[int]) so dacite.from_dict can rebuild this field in
+    # the W&B sweep merge path (logging_util.with_logger); simple_parsing also
+    # parses list[int] from YAML/CLI. Runtime treats it as a list of indices.
+    obs_mask: Optional[list[int] | Literal["odd", "even", "first_half"]] = None  # Mask for the observation space.
     init_kwargs: dict = field(default_factory=dict, hash=False)  # Initialization arguments for the environment.
     env_kwargs: dict = field(default_factory=dict, hash=False)  # Additional kwargs for the environment step method.
     max_ep_length: int = 500  # Maximum length of an episode.
