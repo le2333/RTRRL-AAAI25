@@ -120,7 +120,8 @@ via OIDC, creates the ECR repo if needed, builds the CPU image, and pushes
    uv run aim up --repo logs/aim/.aim --host 0.0.0.0 --port 43800
    ```
 
-   W&B runs appear at `https://wandb.ai/<entity>/RTRRL`.
+   W&B runs appear at `https://wandb.ai/<entity>/RTRRL-PPO` (PPO) /
+   `RTRRL` (rtrrl.py).
 
 ## Hyperparameter sweeps (W&B)
 
@@ -139,11 +140,11 @@ uv run wandb login
 
 # 1) Create the sweep (edit infra/sweep.yaml to adjust ranges first).
 infra/sweep.sh create
-#    -> prints a sweep id like <entity>/RTRRL/abc123
+#    -> prints a sweep id like <entity>/RTRRL-PPO/abc123
 
 # 2) Launch N parallel agents on Batch, each with a base config (env +
 #    num_timesteps come from this config; the sweep overrides ppo_overrides.*).
-infra/sweep.sh launch <entity>/RTRRL/abc123 4 \
+infra/sweep.sh launch <entity>/RTRRL-PPO/abc123 4 \
   --config config/ppo_hopper_default_2m.yml --count 1
 ```
 

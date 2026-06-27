@@ -46,7 +46,9 @@ export AIM_SERVER="aim://172.31.62.192:53800"
 # ---- Logging + Weights & Biases ---------------------------------------------
 # Default logging backend(s) for submitted jobs: "aim", "wandb", or "aim+wandb".
 export LOGGING="${LOGGING:-aim+wandb}"
-export WANDB_PROJECT="${WANDB_PROJECT:-RTRRL}"
+# PPO runs log to "RTRRL-PPO" (see ppo_baseline.py); keep the sweep in the same
+# project so its runs are tracked together.
+export WANDB_PROJECT="${WANDB_PROJECT:-RTRRL-PPO}"
 # Optional W&B entity (user/team). Leave empty to use your default entity.
 export WANDB_ENTITY="${WANDB_ENTITY:-}"
 # FULL ARN (with the random suffix) of the Secrets Manager secret holding the
