@@ -11,7 +11,6 @@ from typing_extensions import override
 from PIL import Image
 from dacite import from_dict
 
-import numpy as np
 import plotly.express as px
 import flax.linen as nn
 import jax.tree_util as jtu
@@ -161,16 +160,8 @@ class AimLogger(DummyLogger):
     @override
     def log(self, metrics, step=None):
         """Loop over scalars and track them with aim."""
-        step = None if step is None else int(step)
         for k, v in metrics.items():
-            # Metrics often come back as JAX/NumPy arrays; aim.track only accepts
-            # python numbers (or AimObjects), so coerce scalar arrays to float.
-            if not isinstance(v, (int, float, str)) and hasattr(v, "__array__"):
-                arr = np.asarray(v)
-                if arr.size != 1:
-                    continue  # skip non-scalar arrays (e.g. per-layer norms)
-                v = arr.item()
-            self.run.track(v, name=k, step=step)
+            self.run.track(v, name=k, step=None if step is None else int(step))
 
     @override
     def log_params(self, params_dict):

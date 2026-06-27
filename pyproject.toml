@@ -5,6 +5,11 @@ description = ""
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    # Pin JAX to the version the authors used. JAX 0.6+ removed the self-alias
+    # `jax.jax` and changed array types, breaking the upstream code unmodified
+    # (envs/wrappers.py uses jax.jax.tree.map; aim 3.28 can't track 0.6 arrays).
+    "jax==0.5.0",
+    "jaxlib==0.5.0",
     "flax>=0.10.2,<0.11",
     "plotly>=5.24.1,<6",
     "dacite>=1.8.1,<2",

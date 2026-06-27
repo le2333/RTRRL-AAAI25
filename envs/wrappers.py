@@ -223,7 +223,7 @@ class EfficientAutoResetWrapper(Wrapper):
                 done = jnp.reshape(done, [x.shape[0]] + [1] * (len(x.shape) - 1))  # type: ignore
             return jnp.where(done, x, y)
 
-        pipeline_state = jax.tree.map(where_done, state.info["first_pipeline_state"], state.pipeline_state)
+        pipeline_state = jax.jax.tree.map(where_done, state.info["first_pipeline_state"], state.pipeline_state)
         obs = where_done(state.info["first_obs"], state.obs)
         return state.replace(pipeline_state=pipeline_state, obs=obs)
 
@@ -337,7 +337,7 @@ class RandomizedAutoResetWrapperNaive(Wrapper):
                 done = jnp.reshape(done, [new.shape[0]] + [1] * (len(new.shape) - 1))
             return jnp.where(done, new, old)
 
-        pipeline_state = jax.tree.map(where_done, reset_state.pipeline_state, state.pipeline_state)
+        pipeline_state = jax.jax.tree.map(where_done, reset_state.pipeline_state, state.pipeline_state)
         obs = where_done(reset_state.obs, state.obs)
         return state.replace(pipeline_state=pipeline_state, obs=obs)
 
