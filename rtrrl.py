@@ -65,6 +65,7 @@ class RTRRLParams:
     # Logging
     logging: str | None = None
     log_repo: str | None = None
+    run_name: str | None = None
     save_model: bool = False
     log_norms: bool = False
     log_code: bool = False
@@ -968,7 +969,7 @@ if __name__ == "__main__":
     hparams: RTRRLParams = simple_parsing.parse(RTRRLParams, add_config_path_arg=True)
 
     # Name run
-    run_name = hparams.env_params.env_name
+    run_name = hparams.run_name or hparams.env_params.env_name
 
     # Run RTRRL
     with_logger(
